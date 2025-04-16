@@ -1,6 +1,7 @@
 'use client'
 
-import {useState, useEffect} from 'react'
+import {useState, useEffect, Suspense} from 'react'
+import {useRouter, useSearchParams} from 'next/navigation'
 import {Card, CardContent, CardDescription, CardHeader, CardTitle} from '@/components/ui/card'
 import {Checkbox} from '@/components/ui/checkbox'
 import {Tabs, TabsList, TabsTrigger} from '@/components/ui/tabs'
@@ -8,6 +9,7 @@ import {ScrollArea} from '@/components/ui/scroll-area'
 import {BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer} from 'recharts'
 import {parseCsv} from '@/lib/csv-parser'
 import {Button} from '@/components/ui/button'
+import {encodeModels, decodeModels} from '@/lib/modelMapping'
 
 const csvData = `Name,Input,Output
 Gemini 2.0 Flash-Lite,$0.075,$0.30
@@ -30,19 +32,75 @@ ChatGPT o1,$15.00,$60.00
 ChatGPT 4.5,$75.00,$150.00
 O1 Pro,$150.00,$600.00`
 
+// Main page component
 export default function Home() {
+  return (
+    <Suspense fallback={<div>Loading...</div>}>
+      <HomeContent />
+    </Suspense>
+  )
+}
+
+function HomeContent() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+
   const [data, setData] = useState<any[]>([])
   const [selectedModels, setSelectedModels] = useState<string[]>([])
   const [filteredData, setFilteredData] = useState<any[]>([])
   const [activeTab, setActiveTab] = useState<string>('all')
   const [displayMode, setDisplayMode] = useState<string>('both')
 
+  // Initialize state from URL parameters with defaults
   useEffect(() => {
     const parsedData = parseCsv(csvData)
     setData(parsedData)
-    // Initially select all models
-    setSelectedModels(parsedData.map((item) => item.Name))
-  }, [])
+
+    const tab = searchParams.get('tab') || 'all'
+    const display = searchParams.get('display') || 'both'
+    const encodedModels = searchParams.get('models')
+    const models = encodedModels ? decodeModels(encodedModels) : parsedData.map((item) => item.Name)
+
+    setActiveTab(tab)
+    setDisplayMode(display)
+    setSelectedModels(models)
+
+    // Clean URL if it matches defaults
+    if (!searchParams.has('tab') && !searchParams.has('display') && !searchParams.has('models')) {
+      updateURL(tab, display, models)
+    }
+  }, [searchParams])
+
+  // Update URL when filters change
+  const updateURL = (newTab?: string, newDisplay?: string, newModels?: string[]) => {
+    const params = new URLSearchParams()
+
+    const tab = newTab || activeTab
+    const display = newDisplay || displayMode
+    const models = newModels || selectedModels
+
+    // Only add parameters if they differ from defaults
+    if (tab !== 'all') {
+      params.set('tab', tab)
+    }
+
+    if (display !== 'both') {
+      params.set('display', display)
+    }
+
+    // Check if all models are selected
+    const allModels = data.map((item) => item.Name)
+    const isAllModelsSelected = models.length === allModels.length && models.every((model) => allModels.includes(model))
+
+    if (!isAllModelsSelected) {
+      params.set('models', encodeModels(models))
+    }
+
+    // Only update URL if there are parameters
+    const queryString = params.toString()
+    const url = queryString ? `?${queryString}` : '/'
+    router.push(url, {scroll: false})
+  }
 
   useEffect(() => {
     // Filter data based on selected models
@@ -51,21 +109,21 @@ export default function Home() {
   }, [selectedModels, data])
 
   const handleModelToggle = (modelName: string) => {
-    setSelectedModels((prev) => {
-      if (prev.includes(modelName)) {
-        return prev.filter((name) => name !== modelName)
-      } else {
-        return [...prev, modelName]
-      }
-    })
+    const newModels = selectedModels.includes(modelName) ? selectedModels.filter((name) => name !== modelName) : [...selectedModels, modelName]
+
+    setSelectedModels(newModels)
+    updateURL(undefined, undefined, newModels)
   }
 
   const handleSelectAll = () => {
-    setSelectedModels(data.map((item) => item.Name))
+    const newModels = data.map((item) => item.Name)
+    setSelectedModels(newModels)
+    updateURL(undefined, undefined, newModels)
   }
 
   const handleDeselectAll = () => {
     setSelectedModels([])
+    updateURL(undefined, undefined, [])
   }
 
   const formatDollar = (value: string) => {
@@ -81,25 +139,30 @@ export default function Home() {
   const handleTabChange = (value: string) => {
     setActiveTab(value)
 
+    let newModels: string[]
     switch (value) {
       case 'low':
-        setSelectedModels(lowPriceModels)
+        newModels = lowPriceModels
         break
       case 'mid':
-        setSelectedModels(midPriceModels)
+        newModels = midPriceModels
         break
       case 'high':
-        setSelectedModels(highPriceModels)
+        newModels = highPriceModels
         break
       case 'all':
       default:
-        setSelectedModels(data.map((item) => item.Name))
+        newModels = data.map((item) => item.Name)
         break
     }
+
+    setSelectedModels(newModels)
+    updateURL(value, undefined, newModels)
   }
 
   const handleDisplayModeChange = (value: string) => {
     setDisplayMode(value)
+    updateURL(undefined, value)
   }
 
   // Prepare chart data
@@ -137,82 +200,86 @@ export default function Home() {
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
             <div className="lg:col-span-3">
               <div className="h-[600px] w-full">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={chartData} margin={{top: 20, right: 30, left: 60, bottom: 120}}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
-                    <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} interval={0} tick={{fill: '#ffffff'}} />
-                    <YAxis tickFormatter={(value) => `$${value.toFixed(2)}`} tick={{fill: '#ffffff'}} />
-                    <Tooltip content={<CustomTooltip />} />
-                    <Legend
-                      wrapperStyle={{
-                        paddingTop: '20px',
-                        color: '#ffffff',
-                      }}
-                    />
-                    {(displayMode === 'both' || displayMode === 'input') && <Bar dataKey="Input" fill={inputColor} name="Input Cost" />}
-                    {(displayMode === 'both' || displayMode === 'output') && <Bar dataKey="Output" fill={outputColor} name="Output Cost" />}
-                  </BarChart>
-                </ResponsiveContainer>
+                <Suspense fallback={<div>Loading chart...</div>}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={chartData} margin={{top: 20, right: 30, left: 60, bottom: 120}}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+                      <XAxis dataKey="name" angle={-45} textAnchor="end" height={100} interval={0} tick={{fill: '#ffffff'}} />
+                      <YAxis tickFormatter={(value) => `$${value.toFixed(2)}`} tick={{fill: '#ffffff'}} />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Legend
+                        wrapperStyle={{
+                          paddingTop: '20px',
+                          color: '#ffffff',
+                        }}
+                      />
+                      {(displayMode === 'both' || displayMode === 'input') && <Bar dataKey="Input" fill={inputColor} name="Input Cost" />}
+                      {(displayMode === 'both' || displayMode === 'output') && <Bar dataKey="Output" fill={outputColor} name="Output Cost" />}
+                    </BarChart>
+                  </ResponsiveContainer>
+                </Suspense>
               </div>
             </div>
 
             <div className="lg:col-span-1">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Settings</CardTitle>
-                  <CardDescription>Toggle models to display</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  <div className="space-y-6">
-                    <div>
-                      <h3 className="text-sm font-medium mb-2">Price Range</h3>
-                      <Tabs defaultValue="all" value={activeTab} onValueChange={handleTabChange}>
-                        <TabsList className="grid grid-cols-4 mb-4">
-                          <TabsTrigger value="all">All</TabsTrigger>
-                          <TabsTrigger value="low">Low</TabsTrigger>
-                          <TabsTrigger value="mid">Mid</TabsTrigger>
-                          <TabsTrigger value="high">High</TabsTrigger>
-                        </TabsList>
-                      </Tabs>
-                    </div>
-
-                    <div>
-                      <h3 className="text-sm font-medium mb-2">Display</h3>
-                      <Tabs defaultValue="both" value={displayMode} onValueChange={handleDisplayModeChange}>
-                        <TabsList className="grid grid-cols-3 mb-4">
-                          <TabsTrigger value="both">Both</TabsTrigger>
-                          <TabsTrigger value="input">Input</TabsTrigger>
-                          <TabsTrigger value="output">Output</TabsTrigger>
-                        </TabsList>
-                      </Tabs>
-                    </div>
-
-                    <div>
-                      <div className="flex justify-between mb-4">
-                        <Button variant="outline" size="sm" onClick={handleSelectAll} className="text-xs">
-                          Select All
-                        </Button>
-                        <Button variant="outline" size="sm" onClick={handleDeselectAll} className="text-xs">
-                          Deselect All
-                        </Button>
+              <Suspense fallback={<div>Loading settings...</div>}>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Settings</CardTitle>
+                    <CardDescription>Toggle models to display</CardDescription>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="space-y-6">
+                      <div>
+                        <h3 className="text-sm font-medium mb-2">Price Range</h3>
+                        <Tabs defaultValue="all" value={activeTab} onValueChange={handleTabChange}>
+                          <TabsList className="grid grid-cols-4 mb-4">
+                            <TabsTrigger value="all">All</TabsTrigger>
+                            <TabsTrigger value="low">Low</TabsTrigger>
+                            <TabsTrigger value="mid">Mid</TabsTrigger>
+                            <TabsTrigger value="high">High</TabsTrigger>
+                          </TabsList>
+                        </Tabs>
                       </div>
 
-                      <ScrollArea className="h-[300px] pr-4">
-                        <div className="space-y-2">
-                          {data.map((model) => (
-                            <div key={model.Name} className="flex items-center space-x-2">
-                              <Checkbox id={model.Name} checked={selectedModels.includes(model.Name)} onCheckedChange={() => handleModelToggle(model.Name)} />
-                              <label htmlFor={model.Name} className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">
-                                {model.Name}
-                              </label>
-                            </div>
-                          ))}
+                      <div>
+                        <h3 className="text-sm font-medium mb-2">Display</h3>
+                        <Tabs defaultValue="both" value={displayMode} onValueChange={handleDisplayModeChange}>
+                          <TabsList className="grid grid-cols-3 mb-4">
+                            <TabsTrigger value="both">Both</TabsTrigger>
+                            <TabsTrigger value="input">Input</TabsTrigger>
+                            <TabsTrigger value="output">Output</TabsTrigger>
+                          </TabsList>
+                        </Tabs>
+                      </div>
+
+                      <div>
+                        <div className="flex justify-between mb-4">
+                          <Button variant="outline" size="sm" onClick={handleSelectAll} className="text-xs">
+                            Select All
+                          </Button>
+                          <Button variant="outline" size="sm" onClick={handleDeselectAll} className="text-xs">
+                            Deselect All
+                          </Button>
                         </div>
-                      </ScrollArea>
+
+                        <ScrollArea className="h-[300px] pr-4">
+                          <div className="space-y-2">
+                            {data.map((model) => (
+                              <div key={model.Name} className="flex items-center space-x-2">
+                                <Checkbox id={model.Name} checked={selectedModels.includes(model.Name)} onCheckedChange={() => handleModelToggle(model.Name)} />
+                                <label htmlFor={model.Name} className="text-sm font-medium leading-none peer-disabled:cursor-not-allowed peer-disabled:opacity-70 cursor-pointer">
+                                  {model.Name}
+                                </label>
+                              </div>
+                            ))}
+                          </div>
+                        </ScrollArea>
+                      </div>
                     </div>
-                  </div>
-                </CardContent>
-              </Card>
+                  </CardContent>
+                </Card>
+              </Suspense>
             </div>
           </div>
         </CardContent>
